@@ -1,6 +1,7 @@
 import cv2
 import mediapipe as mp
 import copy
+import time
 
 # Initialize MediaPipe solutions
 mp_pose = mp.solutions.pose
@@ -11,7 +12,15 @@ pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 hands = mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
 cap = cv2.VideoCapture(0)
-is_front_camera = True  # True for front/selfie, False for rear
+
+# Force resolution to 1280x720 30FPS
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 720)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+cap.set(cv2.CAP_PROP_FPS, 30)
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 10)
+
+is_front_camera = False  # True for front/selfie, False for rear
+prev_time = 0
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -70,16 +79,28 @@ while cap.isOpened():
             cv2.putText(display_frame, f"{label} Hand", (wrist_pos[0] - 30, wrist_pos[1] - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-    # Display camera status
-    cam_status = "Front" if is_front_camera else "Rear"
-    cv2.putText(display_frame, f"Camera: {cam_status}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        # --- Status texts ---
+    # Bottom-left: camera status
+    cam_status = "Press 'Space' to Adjust the Camera | 'Esc' to Quit"
+    cv2.putText(display_frame, cam_status, (10, h - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+    # Bottom-right: resolution + FPS
+    curr_time = time.time()
+    fps = 1 / (curr_time - prev_time) if prev_time else 0
+    prev_time = curr_time
+
+    res_fps_text = f"{w}x{h} | {int(fps)} FPS"
+    text_size, _ = cv2.getTextSize(res_fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+    text_w, text_h = text_size
+    cv2.putText(display_frame, res_fps_text, (w - text_w - 10, h - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
     cv2.imshow("Pose + Hands Detection", display_frame)
     key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):
+    if key == 27:  # ESC key
         break
-    elif key == ord('f'):
+    elif key == 32:  # SPACE key
         is_front_camera = not is_front_camera
 
 cap.release()
