@@ -4,7 +4,7 @@ import time
 from ffpyplayer.player import MediaPlayer
 from utils.game import ExitProgram
 
-ASSETS_PATH = "assets/floor_is_lava.mp4"
+ASSETS_PATH = "assets/catch_it.mp4"
 
 
 def run(camera_stream, display_manager, config):
