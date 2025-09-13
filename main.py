@@ -6,6 +6,7 @@ from utils.game import ExitProgram
 from games import welcome_screen, floor_is_lava, catch_the_ball, combination, floor_is_lava_video, catch_the_ball_video, combination_video
 
 def run():
+    #lets go
     # Initialize camera and display services
     camera_stream = CameraStream(config.CAMERA_INDEX, config.TARGET_FPS, config.MIRROR)
     display_manager = DisplayManager()
