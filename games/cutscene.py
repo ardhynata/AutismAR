@@ -4,10 +4,7 @@ import time
 from ffpyplayer.player import MediaPlayer
 from utils.game import ExitProgram
 
-ASSETS_PATH = "assets/catch_it.mp4"
-
-
-def run(camera_stream, display_manager, config):
+def run(camera_stream, display_manager, config, assets_path):
     """
     Play a video splash screen with audio using ffpyplayer.
     Space → continue, Esc → exit.
@@ -24,7 +21,7 @@ def run(camera_stream, display_manager, config):
     )
 
     # --- Load video ---
-    player = MediaPlayer(ASSETS_PATH, ff_opts={'sync': 'audio'})
+    player = MediaPlayer(assets_path, ff_opts={'sync': 'audio'})
 
     last_frame = None
     start_time = time.time()
@@ -94,5 +91,3 @@ def run(camera_stream, display_manager, config):
         if key == 27:
             cv2.destroyAllWindows()
             raise ExitProgram()
-
-    cv2.destroyAllWindows()

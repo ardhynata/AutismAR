@@ -9,10 +9,10 @@ from utils.game import ExitProgram
 GRID_SIZE = 3
 ACTIVE_INTERVAL = 2
 REST_INTERVAL = 3
-MAX_GAMES = 2
+MAX_GAMES = 10
 
-MULTICOLOR_MODE = True  # True → 3 squares with colors, False → single green square
-REQUIRE_BOTH_FEET = True  # set to False to allow just one foot
+MULTICOLOR_MODE = False  # True → 3 squares with colors, False → single green square
+REQUIRE_BOTH_FEET = False  # set to False to allow just one foot
 FIREBALL_MODE = True         # enable/disable fireball challenge
 FIREBALL_HOLD_TIME = 3       # seconds required to hold fireball
 
@@ -95,12 +95,14 @@ def draw_grid(frame, active_cells, safe_color_name, trapezoid, multicolor):
                     cv2.polylines(overlay, [pts], True, (255, 255, 255), 3)
                 else:
                     cv2.fillPoly(overlay, [pts], (40, 40, 40))
-            else:  # single green square
-                if active_cells is not None and (gx, gy) == active_cells:
-                    cv2.fillPoly(overlay, [pts], (0, 200, 0))
+            else:  # single random-colored square
+                if active_cells is not None and (gx, gy) == active_cells[0]:
+                    color = active_cells[1]
+                    cv2.fillPoly(overlay, [pts], color)
                     cv2.polylines(overlay, [pts], True, (0, 255, 255), 4)
                 else:
                     cv2.fillPoly(overlay, [pts], (40, 40, 40))
+
 
     return cv2.addWeighted(overlay, 0.6, frame, 0.4, 0)
 
@@ -157,9 +159,10 @@ def draw_ui(frame, phase, score, feedback, remaining, w, h, game_count, max_game
             color = (0, 0, 255)
         cv2.putText(frame, str(remaining), (w // 2 - 70, h // 2),
                     cv2.FONT_HERSHEY_DUPLEX, 5, color, 8, cv2.LINE_AA)
-        if multicolor:
+        if multicolor or not multicolor:  # always show safe color
             cv2.putText(frame, f"SAFE: {safe_color_name}", (w//2 - 200, 60),
                         cv2.FONT_HERSHEY_DUPLEX, 1.5, (255, 255, 255), 3)
+
     elif phase == "REST":
         cv2.putText(frame, feedback, (w // 2 - 200, h // 2),
                     cv2.FONT_HERSHEY_DUPLEX, 3,
@@ -193,10 +196,10 @@ def run(camera_stream, display_manager, config):
         safe_color_name = random.choice(available_colors)
         safe_cell = [cell for cell, col in active_cells.items() if col == COLORS[safe_color_name]][0]
     else:
-        # single green square
+        # single random-colored square
         safe_cell = (random.randint(0, GRID_SIZE-1), random.randint(0, GRID_SIZE-1))
-        active_cells = safe_cell
-        safe_color_name = "GREEN"
+        safe_color_name = random.choice(list(COLORS.keys()))
+        active_cells = (safe_cell, COLORS[safe_color_name])
 
     prev_cell = safe_cell
 
@@ -240,9 +243,11 @@ def run(camera_stream, display_manager, config):
                     new_cell = (random.randint(0, GRID_SIZE-1), random.randint(0, GRID_SIZE-1))
                     if new_cell != prev_cell:
                         safe_cell = new_cell
-                        active_cells = safe_cell
+                        safe_color_name = random.choice(list(COLORS.keys()))
+                        active_cells = (safe_cell, COLORS[safe_color_name])
                         prev_cell = safe_cell
                         break
+
             phase = "ACTIVE"
             feedback = ""
             last_change = time.time()

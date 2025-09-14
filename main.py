@@ -1,10 +1,11 @@
 import cv2
+import path
 import config
 from utils.camera import CameraStream
 from utils.display import DisplayManager
 from utils.game import ExitProgram
 
-from games import welcome_screen, floor_is_lava, catch_the_ball, combination, floor_is_lava_video, catch_the_ball_video, combination_video
+from games import floor_is_lava, catch_the_ball, combination, welcome_screen, cutscene
 
 def run():
     # Initialize camera and display services
@@ -21,11 +22,11 @@ def run():
     try:
         try:
             welcome_screen.run(camera_stream, display_manager, config)
-            floor_is_lava_video.run(camera_stream, display_manager, config)
+            cutscene.run(camera_stream, display_manager, config, path.FLOOR_IS_LAVA_VIDEO_PATH)
             floor_is_lava.run(camera_stream, display_manager, config)
-            catch_the_ball_video.run(camera_stream, display_manager, config)
+            cutscene.run(camera_stream, display_manager, config, path.CATCH_THE_BALL_VIDEO_PATH)
             catch_the_ball.run(camera_stream, display_manager, config)
-            combination_video.run(camera_stream, display_manager, config)
+            cutscene.run(camera_stream, display_manager, config, path.COMBINATION_VIDEO_PATH)
             combination.run(camera_stream, display_manager, config)
         except ExitProgram:
             print("ESC pressed. Quitting all games...")
