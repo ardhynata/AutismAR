@@ -7,14 +7,15 @@ from utils.game import ExitProgram
 
 # --- Settings ---
 GRID_SIZE = 3
-ACTIVE_INTERVAL = 2
+ACTIVE_INTERVAL = 10
 REST_INTERVAL = 3
 MAX_GAMES = 10
 
+SAFE_PREVIEW_TIME = 2  # seconds before timer starts
 MULTICOLOR_MODE = False  # True → 3 squares with colors, False → single green square
 REQUIRE_BOTH_FEET = False  # set to False to allow just one foot
-FIREBALL_MODE = True         # enable/disable fireball challenge
-FIREBALL_HOLD_TIME = 3       # seconds required to hold fireball
+
+SUMMARY_BG_PATH = "assets/ui/scoreboard/summary_background.png"
 
 # --- Colors ---
 COLORS = {
@@ -149,24 +150,93 @@ def check_feet_in_safe_cell(results, w, h, safe_cell, trapezoid, frame):
 
 
 def draw_ui(frame, phase, score, feedback, remaining, w, h, game_count, max_games, multicolor, safe_color_name):
+    # --- PREVIEW phase: show only the chosen safe color ---
+    if phase == "PREVIEW":
+        badge_img = cv2.imread(f"assets/ui/floor_is_lava/{safe_color_name.lower()}.png", cv2.IMREAD_UNCHANGED)
+        if badge_img is not None:
+            scale = 0.6  # adjust size
+            bh, bw = badge_img.shape[:2]
+            new_w = int(bw * scale)
+            new_h = int(bh * scale)
+            badge_img_resized = cv2.resize(badge_img, (new_w, new_h))
+
+            # Center on screen
+            x = w // 2 - new_w // 2
+            y = h // 2 - new_h // 2
+            overlay_rgba(frame, badge_img_resized, x, y)
+        return  # skip other UI during preview
+
+    # --- Regular UI ---
     cv2.putText(frame, f"Safe Score: {score}", (30, 80),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
     cv2.putText(frame, f"Game: {game_count}/{max_games}", (30, 130),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
     if phase == "ACTIVE":
-        color = (0, 255, 255)
-        if remaining <= 3 and int(time.time() * 2) % 2 == 0:
-            color = (0, 0, 255)
-        cv2.putText(frame, str(remaining), (w // 2 - 70, h // 2),
-                    cv2.FONT_HERSHEY_DUPLEX, 5, color, 8, cv2.LINE_AA)
-        if multicolor or not multicolor:  # always show safe color
-            cv2.putText(frame, f"SAFE: {safe_color_name}", (w//2 - 200, 60),
-                        cv2.FONT_HERSHEY_DUPLEX, 1.5, (255, 255, 255), 3)
+        digit_img = cv2.imread(f"assets/ui/numbers/{remaining}.png", cv2.IMREAD_UNCHANGED)
+        if digit_img is not None:
+            dh, dw = digit_img.shape[:2]
+            scale = 0.5
+            digit_img = cv2.resize(digit_img, (int(dw*scale), int(dh*scale)))
+            x, y = w//2 - digit_img.shape[1]//2, h//2 - digit_img.shape[0]//2
+            overlay_rgba(frame, digit_img, x, y)
 
     elif phase == "REST":
-        cv2.putText(frame, feedback, (w // 2 - 200, h // 2),
-                    cv2.FONT_HERSHEY_DUPLEX, 3,
-                    (0, 255, 0) if feedback == "Nice!" else (0, 0, 255), 6, cv2.LINE_AA)
+        fb_img = cv2.imread(f"assets/ui/feedback/{'nice' if feedback=='Nice!' else 'try_again'}.png", cv2.IMREAD_UNCHANGED)
+        if fb_img is not None:
+            padding = 10
+            scale = 0.45
+            fb_h, fb_w = fb_img.shape[:2]
+            new_w = min(int(fb_w * scale), w - 2*padding)
+            new_h = min(int(fb_h * scale), h - 2*padding)
+            fb_img_resized = cv2.resize(fb_img, (new_w, new_h))
+            x = padding
+            y = h - new_h - padding
+            overlay_rgba(frame, fb_img_resized, x, y)
+
+
+    elif phase == "REST":
+        if feedback == "Nice!":
+            fb_img = cv2.imread("assets/ui/feedback/nice.png", cv2.IMREAD_UNCHANGED)
+        else:
+            fb_img = cv2.imread("assets/ui/feedback/try_again.png", cv2.IMREAD_UNCHANGED)
+
+        if fb_img is not None:
+            # --- Bottom-left placement with safe bounds ---
+            padding = 10
+            scale = 0.45  # scale down image if too big
+            fb_h, fb_w = fb_img.shape[:2]
+            new_w = min(int(fb_w * scale), w - 2*padding)
+            new_h = min(int(fb_h * scale), h - 2*padding)
+            fb_img_resized = cv2.resize(fb_img, (new_w, new_h))
+
+            x = padding
+            y = h - new_h - padding
+
+            overlay_rgba(frame, fb_img_resized, x, y)
+
+def draw_centered_text(img, text, y, font, scale, color, thickness):
+    """Draw centered text on an image at vertical position y."""
+    text_size, _ = cv2.getTextSize(text, font, scale, thickness)
+    text_w, text_h = text_size
+    x = (img.shape[1] - text_w) // 2
+    cv2.putText(img, text, (x, y), font, scale, color, thickness, lineType=cv2.LINE_AA)
+
+def overlay_rgba(background, overlay, x, y):
+    """Overlay RGBA image on BGR background at position (x, y)."""
+    bh, bw = background.shape[:2]
+    h, w = overlay.shape[:2]
+
+    if x+w > bw or y+h > bh:
+        print("Overlay image exceeds background bounds.")
+        return  # skip if out of bounds
+
+    alpha = overlay[:,:,3] / 255.0
+    for c in range(3):
+        background[y:y+h, x:x+w, c] = (
+            alpha * overlay[:,:,c] +
+            (1-alpha) * background[y:y+h, x:x+w, c]
+        )
 
 # =============================
 # Main Run Function
@@ -178,16 +248,20 @@ def run(camera_stream, display_manager, config):
         screen_width, screen_height, config.ASPECT_RATIO
     )
 
+    # --- Load summary background ---
+    summary_bg = cv2.imread(SUMMARY_BG_PATH, cv2.IMREAD_UNCHANGED)
+    if summary_bg is not None:
+        summary_bg = cv2.resize(summary_bg, (window_width, window_height))
+
     first_frame = True
     session = GameSession(MAX_GAMES, "Floor is Lava")
     score = 0
-    phase = "ACTIVE"
+    phase = "PREVIEW"  # start with preview of safe color
     last_change = time.time()
     feedback = ""
 
-    # Initialize first game cells
+    # --- Initialize first round ---
     if MULTICOLOR_MODE:
-        # 3 squares with colors
         all_cells = [(x, y) for x in range(GRID_SIZE) for y in range(GRID_SIZE)]
         active_choices = random.sample(all_cells, 3)
         available_colors = list(COLORS.keys())
@@ -196,11 +270,9 @@ def run(camera_stream, display_manager, config):
         safe_color_name = random.choice(available_colors)
         safe_cell = [cell for cell, col in active_cells.items() if col == COLORS[safe_color_name]][0]
     else:
-        # single random-colored square
         safe_cell = (random.randint(0, GRID_SIZE-1), random.randint(0, GRID_SIZE-1))
         safe_color_name = random.choice(list(COLORS.keys()))
         active_cells = (safe_cell, COLORS[safe_color_name])
-
     prev_cell = safe_cell
 
     # --- Main loop ---
@@ -217,20 +289,68 @@ def run(camera_stream, display_manager, config):
         trapezoid = get_trapezoid_points(w, h)
         elapsed = time.time() - last_change
         remaining = (max(3, ACTIVE_INTERVAL - score // 3) if phase == "ACTIVE" else REST_INTERVAL) - int(elapsed)
-
         standing_safe = check_feet_in_safe_cell(results, w, h, safe_cell, trapezoid, frame)
 
-        if phase == "ACTIVE" and elapsed > max(3, ACTIVE_INTERVAL - score // 3):
+        # --- Phase handling ---
+        if phase == "PREVIEW":
+            if elapsed > SAFE_PREVIEW_TIME:
+                phase = "ACTIVE"  # start countdown
+                last_change = time.time()
+
+        elif phase == "ACTIVE" and elapsed > max(3, ACTIVE_INTERVAL - score // 3):
             success = standing_safe
             feedback = "Nice!" if success else "Try Again"
-            session.record_result(success)
             if success:
                 score += 1
-            if session.is_finished():
-                break
             phase = "REST"
             last_change = time.time()
+
         elif phase == "REST" and elapsed > REST_INTERVAL:
+            session.record_result(feedback == "Nice!")
+            if session.is_finished():
+                success_count, fail_count, results_list = session.summary()
+                frame = summary_bg.copy() if summary_bg is not None else np.zeros((window_height, window_width, 3), dtype=np.uint8)
+
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                title_gap = int(window_height * 0.05)  # <-- extra gap between title and Success line
+                spacing_summary = int(window_height * 0.05)  # space for Success line
+                spacing_rounds = int(window_height * 0.03)   # spacing between each Round line
+
+                total_lines_height = spacing_summary + spacing_rounds * len(results_list)
+                start_y = int((window_height - total_lines_height) // 2.3)
+
+                # --- Overlay title PNG ---
+                title_png = cv2.imread("assets/ui/scoreboard/summary_title.png", cv2.IMREAD_UNCHANGED)
+                if title_png is not None:
+                    scale = 0.8  # adjust size as needed
+                    th, tw = title_png.shape[:2]
+                    new_w, new_h = int(tw * scale), int(th * scale)
+                    title_resized = cv2.resize(title_png, (new_w, new_h))
+                    x = (window_width - new_w) // 2
+                    y = start_y - new_h - title_gap
+                    overlay_rgba(frame, title_resized, x, y)
+
+
+                # --- Success/Total line ---
+                sf_text = f"Success: {success_count}/{MAX_GAMES}"
+                draw_centered_text(frame, sf_text, start_y, font, 1.5, (15, 125, 15), 4)
+
+                # --- Round results ---
+                for i, r in enumerate(results_list):
+                    color = (28, 180, 13) if r == "Success" else (15, 15, 220)
+                    y = start_y + spacing_summary + spacing_rounds * i
+                    draw_centered_text(frame, f"Round {i+1}: {r}", y, font, 1.1, color, 4)
+
+                cv2.imshow(window_name, frame)
+
+                # Wait for space or Esc to exit
+                while True:
+                    key = cv2.waitKey(10) & 0xFF
+                    if key == 32 or key == 27:
+                        cv2.destroyWindow(window_name)
+                        raise ExitProgram()
+
+            # --- Prepare next round ---
             if MULTICOLOR_MODE:
                 all_cells = [(x, y) for x in range(GRID_SIZE) for y in range(GRID_SIZE)]
                 active_choices = random.sample(all_cells, 3)
@@ -248,12 +368,14 @@ def run(camera_stream, display_manager, config):
                         prev_cell = safe_cell
                         break
 
-            phase = "ACTIVE"
-            feedback = ""
+            phase = "PREVIEW"  # show safe color before next active round
             last_change = time.time()
+            feedback = ""
 
+        # --- Draw grid and UI ---
         frame = draw_grid(frame, active_cells, safe_color_name, trapezoid, MULTICOLOR_MODE)
-        draw_ui(frame, phase, score, feedback, remaining, w, h, session.current_round + 1, MAX_GAMES, MULTICOLOR_MODE, safe_color_name)
+        game_counter = session.current_round + 1
+        draw_ui(frame, phase, score, feedback, remaining, w, h, game_counter, MAX_GAMES, MULTICOLOR_MODE, safe_color_name)
 
         cv2.imshow(window_name, frame)
 
@@ -262,44 +384,6 @@ def run(camera_stream, display_manager, config):
             first_frame = False
 
         key = cv2.waitKey(5) & 0xFF
-        if key == 32 and session.is_finished():
-            break
-        elif key == 27:
+        if key == 27:
             cv2.destroyWindow(window_name)
             raise ExitProgram()
-
-    # --- Summary ---
-    success_count, fail_count, results_list = session.summary()
-    while True:
-        frame = camera_stream.read_frame()
-        if frame is None:
-            continue
-        frame = cv2.resize(frame, (window_width, window_height))
-        h, w, _ = frame.shape
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (50, 50), (w-50, h-50), (0,0,0), -1)
-        frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
-
-        cv2.putText(frame, f"Score: {success_count}/{MAX_GAMES}", (w//2 - 200, 100),
-                    cv2.FONT_HERSHEY_DUPLEX, 2, (0, 0, 255), 4)
-        cv2.putText(frame, "Game Results:", (w//2 - 200, 180),
-                    cv2.FONT_HERSHEY_DUPLEX, 1.5, (255, 255, 0), 3)
-
-        for idx, result in enumerate(results_list):
-            color = (0, 255, 0) if result == "Success" else (0, 0, 255)
-            cv2.putText(frame, f"{idx+1}: {result}", (w//2 - 200, 250 + idx*50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
-
-        cv2.putText(frame, "SPACE - next game | ESC - quit", (w//2 - 200, h-50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-
-        cv2.imshow(window_name, frame)
-
-        key = cv2.waitKey(5) & 0xFF
-        if key == 32:
-            break
-        elif key == 27:
-            cv2.destroyWindow(window_name)
-            raise ExitProgram()
-
-    # cv2.destroyWindow(window_name)
