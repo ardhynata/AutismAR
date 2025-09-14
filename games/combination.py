@@ -12,8 +12,8 @@ ACTIVE_INTERVAL = 15
 REST_INTERVAL = 3
 MAX_GAMES = 10
 
-SAFE_PREVIEW_TIME = 1  # seconds before timer starts
-MULTICOLOR_MODE = True  # True → 3 squares with colors, False → single green square
+SAFE_PREVIEW_TIME = 3  # seconds before timer starts
+MULTICOLOR_MODE = False  # True → 3 squares with colors, False → single green square
 REQUIRE_BOTH_FEET = True  # default; overridden in FIREBALL_MODE
 FIREBALL_MODE = True
 FIREBALL_HOLD_TIME = 2  # seconds
@@ -109,11 +109,13 @@ def draw_grid(frame, active_cells, safe_color_name, trapezoid, multicolor):
                 else:
                     cv2.fillPoly(overlay, [pts], (40, 40, 40))
             else:
-                if active_cells is not None and (gx, gy) == active_cells:
-                    cv2.fillPoly(overlay, [pts], (0, 200, 0))
+                if active_cells is not None and (gx, gy) == active_cells[0]:
+                    color = active_cells[1]
+                    cv2.fillPoly(overlay, [pts], color)
                     cv2.polylines(overlay, [pts], True, (0, 255, 255), 4)
                 else:
                     cv2.fillPoly(overlay, [pts], (40, 40, 40))
+
     return cv2.addWeighted(overlay, 0.6, frame, 0.4, 0)
 
 def spawn_fireball(w, h, trapezoid, scale=1.0):
@@ -241,9 +243,6 @@ def draw_ui(frame, phase, score, feedback, remaining, w, h, game_count, max_game
             digit_img = cv2.resize(digit_img, (int(dw*scale), int(dh*scale)))
             x, y = w//2 - digit_img.shape[1]//2, h//2 - digit_img.shape[0]//2
             overlay_rgba(frame, digit_img, x, y)
-        if multicolor:
-            cv2.putText(frame, f"SAFE: {safe_color_name}", (w//2 - 200, 60),
-                        cv2.FONT_HERSHEY_DUPLEX, 1.5, (255, 255, 255), 3)
     elif phase == "REST":
         if feedback == "Nice!":
             fb_img = cv2.imread("assets/ui/feedback/nice.png", cv2.IMREAD_UNCHANGED)
@@ -323,8 +322,8 @@ def run(camera_stream, display_manager, config):
         safe_cell = [cell for cell, col in active_cells.items() if col == COLORS[safe_color_name]][0]
     else:
         safe_cell = (random.randint(0, GRID_SIZE-1), random.randint(0, GRID_SIZE-1))
-        active_cells = safe_cell
-        safe_color_name = "GREEN"
+        safe_color_name = random.choice(list(COLORS.keys()))
+        active_cells = (safe_cell, COLORS[safe_color_name])
 
     prev_cell = safe_cell
 
@@ -429,7 +428,8 @@ def run(camera_stream, display_manager, config):
                         new_cell = (random.randint(0, GRID_SIZE-1), random.randint(0, GRID_SIZE-1))
                         if new_cell != prev_cell:
                             safe_cell = new_cell
-                            active_cells = safe_cell
+                            safe_color_name = random.choice(list(COLORS.keys()))
+                            active_cells = (safe_cell, COLORS[safe_color_name])
                             prev_cell = safe_cell
                             break
 
