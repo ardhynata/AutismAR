@@ -10,14 +10,16 @@ from utils.game import ExitProgram
 GRID_SIZE = 3
 ACTIVE_INTERVAL = 15
 REST_INTERVAL = 3
-MAX_GAMES = 5
+MAX_GAMES = 10
 
+SAFE_PREVIEW_TIME = 1  # seconds before timer starts
 MULTICOLOR_MODE = True  # True → 3 squares with colors, False → single green square
 REQUIRE_BOTH_FEET = True  # default; overridden in FIREBALL_MODE
 FIREBALL_MODE = True
 FIREBALL_HOLD_TIME = 2  # seconds
 FIREBALL_SCALE = 1.5  # multiplier for fireball size
 
+SUMMARY_BG_PATH = "assets/ui/scoreboard/summary_background.png"
 # --- Colors ---
 COLORS = {
     "RED": (0, 0, 255),
@@ -113,47 +115,6 @@ def draw_grid(frame, active_cells, safe_color_name, trapezoid, multicolor):
                 else:
                     cv2.fillPoly(overlay, [pts], (40, 40, 40))
     return cv2.addWeighted(overlay, 0.6, frame, 0.4, 0)
-
-def check_feet_in_safe_cell(results, w, h, safe_cell, trapezoid, frame):
-    if safe_cell is None or not results.pose_landmarks:
-        return False
-    landmarks = results.pose_landmarks.landmark
-    feet = [mp_pose.PoseLandmark.LEFT_FOOT_INDEX, mp_pose.PoseLandmark.RIGHT_FOOT_INDEX]
-    top_left, top_right, bottom_left, bottom_right = trapezoid
-    gy, gx = safe_cell[1], safe_cell[0]
-    y_t, y_b = gy / GRID_SIZE, (gy + 1) / GRID_SIZE
-    left_top = (int(top_left[0] + (bottom_left[0]-top_left[0])*y_t),
-                int(top_left[1] + (bottom_left[1]-top_left[1])*y_t))
-    right_top = (int(top_right[0] + (bottom_right[0]-top_right[0])*y_t),
-                 int(top_right[1] + (bottom_right[1]-top_right[1])*y_t))
-    left_bottom = (int(top_left[0] + (bottom_left[0]-top_left[0])*y_b),
-                   int(top_left[1] + (bottom_left[1]-top_left[1])*y_b))
-    right_bottom = (int(top_right[0] + (bottom_right[0]-top_right[0])*y_b),
-                    int(top_right[1] + (bottom_right[1]-top_right[1])*y_b))
-    x_t, x_b = gx / GRID_SIZE, (gx + 1) / GRID_SIZE
-    cell_tl = (int(left_top[0] + (right_top[0]-left_top[0])*x_t),
-               int(left_top[1] + (right_top[1]-left_top[1])*x_t))
-    cell_tr = (int(left_top[0] + (right_top[0]-left_top[0])*x_b),
-               int(left_top[1] + (right_top[1]-left_top[1])*x_b))
-    cell_bl = (int(left_bottom[0] + (right_bottom[0]-left_bottom[0])*x_t),
-               int(left_bottom[1] + (right_bottom[1]-left_bottom[1])*x_t))
-    cell_br = (int(left_bottom[0] + (right_bottom[0]-left_bottom[0])*x_b),
-               int(left_bottom[1] + (right_bottom[1]-left_bottom[1])*x_b))
-    pts = np.array([cell_tl, cell_tr, cell_br, cell_bl], dtype=np.int32)
-
-    inside_count = 0
-    for foot in feet:
-        px, py = int(landmarks[foot].x * w), int(landmarks[foot].y * h)
-        inside = cv2.pointPolygonTest(pts, (px, py), False) >= 0
-        color = (0, 255, 0) if inside else (0, 0, 255)
-        cv2.circle(frame, (px, py), 10, color, -1)
-        if inside:
-            inside_count += 1
-
-    if REQUIRE_BOTH_FEET:
-        return inside_count == len(feet)
-    else:
-        return inside_count > 0
 
 def spawn_fireball(w, h, trapezoid, scale=1.0):
     top_left, top_right, bottom_left, bottom_right = trapezoid
@@ -251,23 +212,79 @@ def check_feet_in_safe_cell(results, w, h, safe_cell, trapezoid, frame):
 
 
 def draw_ui(frame, phase, score, feedback, remaining, w, h, game_count, max_games, multicolor, safe_color_name):
+
+    if phase == "PREVIEW":
+        badge_img = cv2.imread(f"assets/ui/floor_is_lava/{safe_color_name.lower()}.png", cv2.IMREAD_UNCHANGED)
+        if badge_img is not None:
+            scale = 0.6  # adjust size
+            bh, bw = badge_img.shape[:2]
+            new_w = int(bw * scale)
+            new_h = int(bh * scale)
+            badge_img_resized = cv2.resize(badge_img, (new_w, new_h))
+
+            # Center on screen
+            x = w // 2 - new_w // 2
+            y = h // 2 - new_h // 2
+            overlay_rgba(frame, badge_img_resized, x, y)
+        return  # skip other UI during preview
+
     cv2.putText(frame, f"Safe Score: {score}", (30, 80),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
     cv2.putText(frame, f"Game: {game_count}/{max_games}", (30, 130),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    
     if phase == "ACTIVE":
-        color = (0, 255, 255)
-        if remaining <= 3 and int(time.time() * 2) % 2 == 0:
-            color = (0, 0, 255)
-        cv2.putText(frame, str(remaining), (w // 2 - 70, h // 2),
-                    cv2.FONT_HERSHEY_DUPLEX, 5, color, 8, cv2.LINE_AA)
+        digit_img = cv2.imread(f"assets/ui/numbers/{remaining}.png", cv2.IMREAD_UNCHANGED)
+        if digit_img is not None:
+            dh, dw = digit_img.shape[:2]
+            scale = 0.5  # adjust size
+            digit_img = cv2.resize(digit_img, (int(dw*scale), int(dh*scale)))
+            x, y = w//2 - digit_img.shape[1]//2, h//2 - digit_img.shape[0]//2
+            overlay_rgba(frame, digit_img, x, y)
         if multicolor:
             cv2.putText(frame, f"SAFE: {safe_color_name}", (w//2 - 200, 60),
                         cv2.FONT_HERSHEY_DUPLEX, 1.5, (255, 255, 255), 3)
     elif phase == "REST":
-        cv2.putText(frame, feedback, (w // 2 - 200, h // 2),
-                    cv2.FONT_HERSHEY_DUPLEX, 3,
-                    (0, 255, 0) if feedback == "Nice!" else (0, 0, 255), 6, cv2.LINE_AA)
+        if feedback == "Nice!":
+            fb_img = cv2.imread("assets/ui/feedback/nice.png", cv2.IMREAD_UNCHANGED)
+        else:
+            fb_img = cv2.imread("assets/ui/feedback/try_again.png", cv2.IMREAD_UNCHANGED)
+
+        if fb_img is not None:
+            # --- Bottom-left placement with safe bounds ---
+            padding = 10
+            scale = 0.45  # scale down image if too big
+            fb_h, fb_w = fb_img.shape[:2]
+            new_w = min(int(fb_w * scale), w - 2*padding)
+            new_h = min(int(fb_h * scale), h - 2*padding)
+            fb_img_resized = cv2.resize(fb_img, (new_w, new_h))
+
+            x = padding
+            y = h - new_h - padding
+
+            overlay_rgba(frame, fb_img_resized, x, y)
+
+def draw_centered_text(img, text, y, font, scale, color, thickness):
+    """Draw centered text on an image at vertical position y."""
+    text_size, _ = cv2.getTextSize(text, font, scale, thickness)
+    text_w, text_h = text_size
+    x = (img.shape[1] - text_w) // 2
+    cv2.putText(img, text, (x, y), font, scale, color, thickness, lineType=cv2.LINE_AA)
+
+def overlay_rgba(background, overlay, x, y):
+    """Overlay RGBA image on BGR background at position (x, y)."""
+    bh, bw = background.shape[:2]
+    h, w = overlay.shape[:2]
+
+    if x+w > bw or y+h > bh:
+        return  # skip if out of bounds
+
+    alpha = overlay[:,:,3] / 255.0
+    for c in range(3):
+        background[y:y+h, x:x+w, c] = (
+            alpha * overlay[:,:,c] +
+            (1-alpha) * background[y:y+h, x:x+w, c]
+        )
 
 # =============================
 # Main Run Function
@@ -283,10 +300,15 @@ def run(camera_stream, display_manager, config):
         screen_width, screen_height, config.ASPECT_RATIO
     )
 
+    # --- Load summary background ---
+    summary_bg = cv2.imread(SUMMARY_BG_PATH, cv2.IMREAD_UNCHANGED)
+    if summary_bg is not None:
+        summary_bg = cv2.resize(summary_bg, (window_width, window_height))
+
     first_frame = True
     session = GameSession(MAX_GAMES, "Combination Game")
     score = 0
-    phase = "ACTIVE"
+    phase = "PREVIEW"  # PREVIEW → ACTIVE → REST
     last_change = time.time()
     feedback = ""
 
@@ -326,47 +348,102 @@ def run(camera_stream, display_manager, config):
 
         standing_safe = check_feet_in_safe_cell(results, w, h, safe_cell, trapezoid, frame)
 
-        fireball_success = False
-        if FIREBALL_MODE and phase == "ACTIVE":
-            draw_fireball(frame, fireball)
-            fireball_success = check_hand_on_fireball(results, fireball, w, h, frame)
+        # --- Phase handling ---
+        if phase == "PREVIEW":
+            # Show safe color badge
+            if elapsed > SAFE_PREVIEW_TIME:
+                phase = "ACTIVE"
+                last_change = time.time()
 
-        if phase == "ACTIVE" and elapsed > max(3, ACTIVE_INTERVAL - score // 3):
-            success = standing_safe or fireball_success
-            feedback = "Nice!" if success else "Try Again"
-            session.record_result(success)
-            if success:
-                score += 1
-            if session.is_finished():
-                break
-            phase = "REST"
-            last_change = time.time()
-        elif phase == "REST" and elapsed > REST_INTERVAL:
-            # Reset cells
-            if MULTICOLOR_MODE:
-                all_cells = [(x, y) for x in range(GRID_SIZE) for y in range(GRID_SIZE)]
-                active_choices = random.sample(all_cells, 3)
-                random.shuffle(available_colors)
-                active_cells = {cell: COLORS[available_colors[i]] for i, cell in enumerate(active_choices)}
-                safe_color_name = random.choice(available_colors)
-                safe_cell = [cell for cell, col in active_cells.items() if col == COLORS[safe_color_name]][0]
-            else:
-                while True:
-                    new_cell = (random.randint(0, GRID_SIZE-1), random.randint(0, GRID_SIZE-1))
-                    if new_cell != prev_cell:
-                        safe_cell = new_cell
-                        active_cells = safe_cell
-                        prev_cell = safe_cell
-                        break
-            # Respawn fireball
+        elif phase == "ACTIVE":
+            fireball_success = False
             if FIREBALL_MODE:
-                fireball = spawn_fireball(w, h, trapezoid, FIREBALL_SCALE)
-            phase = "ACTIVE"
-            feedback = ""
-            last_change = time.time()
+                draw_fireball(frame, fireball)
+                fireball_success = check_hand_on_fireball(results, fireball, w, h, frame)
 
+            if elapsed > max(3, ACTIVE_INTERVAL - score // 3):
+                success = standing_safe or fireball_success
+                feedback = "Nice!" if success else "Try Again"
+                if success:
+                    score += 1
+                phase = "REST"
+                last_change = time.time()
+
+        elif phase == "REST":
+            if elapsed > REST_INTERVAL:
+                session.record_result(feedback == "Nice!")
+                if session.is_finished():
+                    success_count, fail_count, results_list = session.summary()
+                    frame = summary_bg.copy() if summary_bg is not None else np.zeros((window_height, window_width, 3), dtype=np.uint8)
+
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    title_gap = int(window_height * 0.05)  # <-- extra gap between title and Success line
+                    spacing_summary = int(window_height * 0.05)  # space for Success line
+                    spacing_rounds = int(window_height * 0.03)   # spacing between each Round line
+
+                    total_lines_height = spacing_summary + spacing_rounds * len(results_list)
+                    start_y = int((window_height - total_lines_height) // 2.3)
+
+                    # --- Overlay title PNG ---
+                    title_png = cv2.imread("assets/ui/scoreboard/summary_title.png", cv2.IMREAD_UNCHANGED)
+                    if title_png is not None:
+                        scale = 0.8  # adjust size as needed
+                        th, tw = title_png.shape[:2]
+                        new_w, new_h = int(tw * scale), int(th * scale)
+                        title_resized = cv2.resize(title_png, (new_w, new_h))
+                        x = (window_width - new_w) // 2
+                        y = start_y - new_h - title_gap
+                        overlay_rgba(frame, title_resized, x, y)
+
+
+                    # --- Success/Total line ---
+                    sf_text = f"Success: {success_count}/{MAX_GAMES}"
+                    draw_centered_text(frame, sf_text, start_y, font, 1.5, (15, 125, 15), 4)
+
+                    # --- Round results ---
+                    for i, r in enumerate(results_list):
+                        color = (28, 180, 13) if r == "Success" else (15, 15, 220)
+                        y = start_y + spacing_summary + spacing_rounds * i
+                        draw_centered_text(frame, f"Round {i+1}: {r}", y, font, 1.1, color, 4)
+
+                    cv2.imshow(window_name, frame)
+
+                    # Wait for space or Esc to exit
+                    while True:
+                        key = cv2.waitKey(10) & 0xFF
+                        if key == 32 or key == 27:
+                            cv2.destroyWindow(window_name)
+                            raise ExitProgram()
+
+                # --- Prepare next round ---
+                prev_cell = safe_cell
+                if MULTICOLOR_MODE:
+                    all_cells = [(x, y) for x in range(GRID_SIZE) for y in range(GRID_SIZE)]
+                    active_choices = random.sample(all_cells, 3)
+                    random.shuffle(available_colors)
+                    active_cells = {cell: COLORS[available_colors[i]] for i, cell in enumerate(active_choices)}
+                    safe_color_name = random.choice(available_colors)
+                    safe_cell = [cell for cell, col in active_cells.items() if col == COLORS[safe_color_name]][0]
+                else:
+                    while True:
+                        new_cell = (random.randint(0, GRID_SIZE-1), random.randint(0, GRID_SIZE-1))
+                        if new_cell != prev_cell:
+                            safe_cell = new_cell
+                            active_cells = safe_cell
+                            prev_cell = safe_cell
+                            break
+
+                if FIREBALL_MODE:
+                    fireball = spawn_fireball(w, h, trapezoid, FIREBALL_SCALE)
+
+                phase = "PREVIEW"
+                feedback = ""
+                last_change = time.time()
+
+        # --- Draw trapezoid grid and UI ---
         frame = draw_grid(frame, active_cells, safe_color_name, trapezoid, MULTICOLOR_MODE)
-        draw_ui(frame, phase, score, feedback, remaining, w, h, session.current_round + 1, MAX_GAMES, MULTICOLOR_MODE, safe_color_name)
+        game_counter = session.current_round + 1
+        draw_ui(frame, phase, score, feedback, remaining, w, h, game_counter, MAX_GAMES, MULTICOLOR_MODE, safe_color_name)
 
         cv2.imshow(window_name, frame)
 
@@ -380,39 +457,3 @@ def run(camera_stream, display_manager, config):
         elif key == 27:
             cv2.destroyWindow(window_name)
             raise ExitProgram()
-
-    # --- Summary ---
-    success_count, fail_count, results_list = session.summary()
-    while True:
-        frame = camera_stream.read_frame()
-        if frame is None:
-            continue
-        frame = cv2.resize(frame, (window_width, window_height))
-        h, w, _ = frame.shape
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (50, 50), (w-50, h-50), (0,0,0), -1)
-        frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
-
-        cv2.putText(frame, f"Score: {success_count}/{MAX_GAMES}", (w//2 - 200, 100),
-                    cv2.FONT_HERSHEY_DUPLEX, 2, (0, 0, 255), 4)
-        cv2.putText(frame, "Game Results:", (w//2 - 200, 180),
-                    cv2.FONT_HERSHEY_DUPLEX, 1.5, (255, 255, 0), 3)
-
-        for idx, result in enumerate(results_list):
-            color = (0, 255, 0) if result == "Success" else (0, 0, 255)
-            cv2.putText(frame, f"{idx+1}: {result}", (w//2 - 200, 250 + idx*50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
-
-        cv2.putText(frame, "SPACE - next game | ESC - quit", (w//2 - 200, h-50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-
-        cv2.imshow(window_name, frame)
-
-        key = cv2.waitKey(5) & 0xFF
-        if key == 32:
-            break
-        elif key == 27:
-            cv2.destroyWindow(window_name)
-            raise ExitProgram()
-
-    # cv2.destroyWindow(window_name)
